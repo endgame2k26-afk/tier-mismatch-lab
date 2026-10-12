@@ -213,13 +213,44 @@ def render_results():
         bet_counts = result[result.bet_taken].groupby("season").size()
         season_stats["bets"] = season_stats["season"].map(bet_counts).fillna(0).astype(int)
         season_stats["cumulative_net_units"] = season_stats["net_units"].cumsum()
+        # Use HTML/CSS for these small charts rather than Streamlit's chart
+        # helpers, which import Altair and can fail when the cloud environment
+        # has an incompatible typing_extensions / Altair combination.
         c1, c2 = st.columns(2)
         with c1:
             st.caption("Net units by season")
-            st.bar_chart(season_stats.set_index("season")[["net_units"]])
+            max_abs = max(float(season_stats["net_units"].abs().max()), 1.0)
+            rows = []
+            for _, row in season_stats.iterrows():
+                value = float(row["net_units"])
+                width = min(abs(value) / max_abs * 100, 100)
+                color = "#16a34a" if value >= 0 else "#dc2626"
+                rows.append(
+                    "<div style='display:grid;grid-template-columns:60px 1fr 72px;gap:10px;align-items:center;margin:9px 0;'>"
+                    f"<span style='color:var(--text-color);'>{row['season']}</span>"
+                    "<div style='height:14px;background:rgba(128,128,128,.15);border-radius:4px;overflow:hidden;'>"
+                    f"<div style='height:14px;width:{width:.1f}%;background:{color};border-radius:4px;'></div></div>"
+                    f"<span style='text-align:right;color:var(--text-color);font-variant-numeric:tabular-nums;'>{value:+.2f}</span>"
+                    "</div>"
+                )
+            st.markdown("<div style='padding:4px 0;'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
         with c2:
             st.caption("Cumulative net units across test seasons")
-            st.line_chart(season_stats.set_index("season")[["cumulative_net_units"]])
+            max_abs_cum = max(float(season_stats["cumulative_net_units"].abs().max()), 1.0)
+            rows = []
+            for _, row in season_stats.iterrows():
+                value = float(row["cumulative_net_units"])
+                width = min(abs(value) / max_abs_cum * 100, 100)
+                color = "#16a34a" if value >= 0 else "#dc2626"
+                rows.append(
+                    "<div style='display:grid;grid-template-columns:60px 1fr 72px;gap:10px;align-items:center;margin:9px 0;'>"
+                    f"<span style='color:var(--text-color);'>{row['season']}</span>"
+                    "<div style='height:14px;background:rgba(128,128,128,.15);border-radius:4px;overflow:hidden;'>"
+                    f"<div style='height:14px;width:{width:.1f}%;background:{color};border-radius:4px;'></div></div>"
+                    f"<span style='text-align:right;color:var(--text-color);font-variant-numeric:tabular-nums;'>{value:+.2f}</span>"
+                    "</div>"
+                )
+            st.markdown("<div style='padding:4px 0;'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
         st.dataframe(season_stats, use_container_width=True, hide_index=True)
 
 
