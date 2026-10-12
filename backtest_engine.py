@@ -100,6 +100,27 @@ def _p_home(home_elo, away_elo):
 def _profit(american_odds):
     return american_odds / 100.0 if american_odds > 0 else 100.0 / abs(american_odds)
 
+
+def _dense_ranks(ratings, tolerance=1e-6):
+    """Return dense ranks: teams with effectively equal Elo share a rank.
+
+    Dense ranks prevent arbitrary alphabetical tie-breaks from manufacturing
+    large rank gaps when many teams have identical preseason ratings. Distinct
+    Elo levels receive consecutive ranks (1, 2, 3...) rather than positional
+    ranks that skip numbers after ties.
+    """
+    ordered = sorted(ratings.items(), key=lambda item: (-float(item[1]), str(item[0])))
+    ranks = {}
+    current_rank = 0
+    previous_rating = None
+    for team, rating in ordered:
+        rating = float(rating)
+        if previous_rating is None or abs(previous_rating - rating) > tolerance:
+            current_rank += 1
+            previous_rating = rating
+        ranks[team] = current_rank
+    return ranks
+
 def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, minimum_edge_pp=4.0):
     ok, issues, df = validate_games_frame(games)
     if not ok:
@@ -145,8 +166,7 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
             # Freeze all active teams' ratings for this date before any result
             # from this date is used.
             snapshot = {team: ratings.get(team, 1500.0) for team in active_teams}
-            ranked = sorted(snapshot.items(), key=lambda item: (-item[1], item[0]))
-            ranks = {team: i + 1 for i, (team, _) in enumerate(ranked)}
+            ranks = _dense_ranks(snapshot)
             updates = []
 
             for _, game in group.iterrows():
@@ -239,8 +259,11 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
         "test_games_before_rank_filter": int(len(out)),
         "date_batches_processed": int(batches),
         "market_rows_before_rank_filter": int(out.market_available.sum()) if len(out) else 0,
+        "rank_gap_eligible_games": int(out.rank_gap_eligible.sum()) if len(out) else 0,
+        "rank_gap_filter_pass_rate_pct": round(float(out.rank_gap_eligible.mean() * 100.0), 2) if len(out) else 0.0,
+        "test_games_after_rank_filter": int(out.rank_gap_eligible.sum()) if len(out) else 0,
         "max_rank": int(max(out.home_rank_pregame.max(), out.away_rank_pregame.max())) if len(out) else 0,
-        "note": "Pregame ratings use only prior-date results; ranks include only franchises scheduled in that season."
+        "note": "Pregame ratings use only prior-date results; ranks include only franchises scheduled in that season. Equal Elo ratings share a dense rank, preventing alphabetical tie-breaks from creating artificial rank gaps."
     }
     out = out[out.rank_gap_eligible].reset_index(drop=True)
     return out, diagnostics
