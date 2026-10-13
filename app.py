@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from model_market_report import build_model_market_report
+
 from backtest_engine import (
     american_to_implied,
     load_nflverse_games,
@@ -63,6 +65,7 @@ PAGES = [
     "Overview",
     "Backtest Lab",
     "Game Explorer",
+    "Model vs Market",
     "Manual Odds",
     "Data & Method",
 ]
@@ -367,6 +370,37 @@ elif page == "Game Explorer":
         st.dataframe(view[display_cols], use_container_width=True, hide_index=True)
         st.download_button("Download filtered games", view.to_csv(index=False), "tier_mismatch_filtered_games.csv", "text/csv")
 
+
+elif page == "Model vs Market":
+    st.markdown("### Model vs Market")
+    st.write("Compare the Elo baseline with the two-sided no-vig market on the same historical games. This is a probability-quality audit, not a profitability claim.")
+    audit_result = st.session_state.audit_result
+    if audit_result is None:
+        st.info("Run a walk-forward backtest first. This report uses the full test-period audit, including games that failed the rank-gap screen.")
+    else:
+        report = build_model_market_report(audit_result)
+        summary = report["summary"]
+        if summary.empty:
+            st.warning("No games have both valid two-sided moneylines and non-tied outcomes, so model-versus-market scoring is unavailable.")
+        else:
+            st.caption(f"Scored {int(summary.iloc[0]['Games scored']):,} same-game outcomes with both moneylines available. Tied games and rows with invalid/missing odds are excluded from probability scoring.")
+            left, right = st.columns(2)
+            with left:
+                st.markdown("#### Probability accuracy")
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+            with right:
+                st.markdown("#### How to read this")
+                st.markdown("- **Brier score:** average squared probability error; lower is better.\n- **Log loss:** penalizes confident wrong probabilities; lower is better.\n- Market probability is the no-vig probability of the model-selected favorite, so both are scored against the same outcome.\n- Better probability scores do not automatically mean a profitable betting strategy.")
+            st.markdown("#### By season")
+            st.dataframe(report["by_season"], use_container_width=True, hide_index=True)
+            st.markdown("#### By model-edge band")
+            st.caption("Edge = Elo probability minus no-vig market probability for the model-selected favorite. Bands are descriptive; do not tune thresholds to maximize this historical table.")
+            st.dataframe(report["by_edge"], use_container_width=True, hide_index=True)
+            st.markdown("#### Actual strategy bets")
+            st.dataframe(report["bets"], use_container_width=True, hide_index=True)
+            st.download_button("Download Model vs Market report CSV", report["by_season"].to_csv(index=False), "tier_mismatch_model_vs_market_by_season.csv", "text/csv")
+            st.download_button("Download edge-band report CSV", report["by_edge"].to_csv(index=False), "tier_mismatch_model_vs_market_edge_bands.csv", "text/csv")
+    st.warning("This baseline is not the full Tier-Mismatch V2. Historical odds timestamps are not verified, and these results are not evidence of future profitability.")
 elif page == "Manual Odds":
     st.markdown("### Manual Odds Calculator")
     st.write("Compare a hypothetical model probability against a two-sided market price. This tool does not generate a prediction.")
