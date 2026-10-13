@@ -79,7 +79,7 @@ with st.sidebar:
 
 # Session state initialization
 for key, default in [
-    ("games", None), ("source", ""), ("result", None), ("diag", None), ("meta", None),
+    ("games", None), ("source", ""), ("result", None), ("audit_result", None), ("diag", None), ("meta", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -102,6 +102,7 @@ def show_data_loader():
                     st.session_state.games = load_nflverse_games()
                     st.session_state.source = "nflverse public games.csv"
                 st.session_state.result = None
+                st.session_state.audit_result = None
                 st.session_state.meta = None
                 st.success("Historical dataset loaded.")
             except Exception as exc:
@@ -115,6 +116,7 @@ def show_data_loader():
                 st.session_state.games = uploaded
                 st.session_state.source = upload.name
                 st.session_state.result = None
+                st.session_state.audit_result = None
                 st.session_state.meta = None
                 st.success(f"Loaded {len(uploaded):,} rows from {upload.name}.")
             except Exception as exc:
@@ -153,7 +155,15 @@ def render_run_controls(normalized):
     if st.button("Run walk-forward backtest", type="primary", use_container_width=True, key="run_backtest"):
         try:
             with st.spinner("Scoring the historical schedule chronologically…"):
-                result, diag = run_walk_forward_backtest(normalized, int(start_season), int(rank_gap), float(edge_pp))
+                # Keep strategy metrics on eligible games, while preserving the full
+                # test-period population for the audit export.
+                result, diag = run_walk_forward_backtest(
+                    normalized, int(start_season), int(rank_gap), float(edge_pp)
+                )
+                audit_result, _ = run_walk_forward_backtest(
+                    normalized, int(start_season), int(rank_gap), float(edge_pp),
+                    include_ineligible=True,
+                )
             meta = {
                 "source": st.session_state.source,
                 "first_test_season": int(start_season),
@@ -163,6 +173,7 @@ def render_run_controls(normalized):
                 "model": "Elo/rank-gap baseline",
             }
             st.session_state.result = result
+            st.session_state.audit_result = audit_result
             st.session_state.diag = diag
             st.session_state.meta = meta
             st.success("Backtest completed. Review the diagnostics before interpreting returns.")
@@ -182,7 +193,21 @@ def render_results():
     st.markdown("### Latest run")
     st.caption(f"Source: {meta.get('source','unknown')} · Test seasons from {meta.get('first_test_season','—')} · Run UTC: {meta.get('run_utc','—')}")
     if len(result) == 0:
-        st.warning("No games met the selected rank-gap threshold in the test period. Try a lower threshold or inspect the data.")
+        st.warning("No games met the selected rank-gap threshold in the test period. Strategy metrics are unavailable, but the full audit can still be downloaded.")
+        audit_result = st.session_state.audit_result
+        if audit_result is not None:
+            st.download_button(
+                "Download full audit CSV",
+                audit_result.to_csv(index=False),
+                "tier_mismatch_full_walk_forward_audit.csv",
+                "text/csv",
+            )
+        st.download_button(
+            "Download run metadata",
+            json.dumps(meta, indent=2),
+            "tier_mismatch_run_metadata.json",
+            "application/json",
+        )
         return
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Rank-gap eligible", f"{summary['eligible_games']:,}")
@@ -192,7 +217,8 @@ def render_results():
     m5, m6, m7, m8 = st.columns(4)
     m5.metric("Net units", summary["net_units"])
     m6.metric("ROI on risked units", summary["roi"])
-    m7.metric("Brier score", summary["brier"])
+    m7.metric("Brier score (eligible games)", summary["brier"])
+    st.caption("Brier is calculated on eligible games with non-tied outcomes, using the model's favorite-win probability; it is not a market-relative score.")
     m8.metric("Odds coverage", summary["odds_coverage"])
     with st.expander("Run diagnostics", expanded=True):
         d1, d2, d3 = st.columns(3)
@@ -201,7 +227,25 @@ def render_results():
         d3.metric("Max rank in returned audit", str(diag.get("max_rank", "—")))
         st.caption(diag.get("note", "Diagnostics not available."))
     st.warning("Research only: historical results are not proof of future profitability. Market odds may not have verified timestamps, and this baseline lacks the full strategy's contextual filters.")
-    st.download_button("Download audit CSV", result.to_csv(index=False), "tier_mismatch_walk_forward_audit.csv", "text/csv")
+    audit_result = st.session_state.audit_result
+    if audit_result is not None:
+        st.caption(
+            f"Full audit export: {len(audit_result):,} test-period games, including games rejected "
+            "by the rank-gap screen. Strategy metrics above remain based on rank-gap-eligible games."
+        )
+        st.download_button(
+            "Download full audit CSV",
+            audit_result.to_csv(index=False),
+            "tier_mismatch_full_walk_forward_audit.csv",
+            "text/csv",
+        )
+    else:
+        st.download_button(
+            "Download eligible-game CSV",
+            result.to_csv(index=False),
+            "tier_mismatch_eligible_walk_forward_audit.csv",
+            "text/csv",
+        )
     st.download_button("Download run metadata", json.dumps(meta, indent=2), "tier_mismatch_run_metadata.json", "application/json")
     st.markdown("### Performance by season")
     if "season" in result and "net_units" in result:
@@ -316,7 +360,7 @@ elif page == "Game Explorer":
             "season", "gameday", "away_team", "home_team", "model_favorite",
             "favorite_rank_gap", "model_favorite_win_probability",
             "favorite_no_vig_market_probability", "edge_percentage_points",
-            "market_available", "rank_gap_eligible", "bet_taken", "bet_result",
+            "market_available", "rank_gap_eligible", "bet_taken", "bet_decision_reason", "bet_result",
             "home_moneyline", "away_moneyline", "net_units",
         ] if c in view.columns]
         st.caption(f"{len(view):,} games shown")
