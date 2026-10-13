@@ -206,7 +206,11 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
                 favorite_won = (home_score > away_score) if favorite == "HOME" else (away_score > home_score)
                 if not bet:
                     net = 0.0
-                elif tie or not favorite_won:
+                elif tie:
+                    # Standard two-way NFL moneyline ties are pushes.
+                    # Return the stake: no profit and no loss.
+                    net = 0.0
+                elif not favorite_won:
                     net = -1.0
                 else:
                     net = _profit(favorite_ml)
@@ -233,10 +237,12 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
                     "edge_percentage_points": round(float(edge), 4) if market_available else None,
                     "rank_gap_eligible": bool(eligible),
                     "bet_taken": bool(bet),
-                    "bet_result": (int(favorite_won) if not tie else 0) if bet else None,
+                    # None marks a push; it is neither a win nor a loss.
+                    "bet_result": (int(favorite_won) if not tie else None) if bet else None,
                     "risked_units": 1.0 if bet else 0.0,
                     "net_units": round(float(net), 4),
-                    "actual_favorite_won": bool(favorite_won),
+                    # Keep tied games out of binary win-probability scoring.
+                    "actual_favorite_won": (bool(favorite_won) if not tie else None),
                     "season_team_count": len(active_teams),
                 })
 
@@ -272,12 +278,16 @@ def summarize_backtest(results):
     if results is None or results.empty:
         return {
             "eligible_games": 0, "games_with_odds": 0, "bets": 0,
+            "wins": 0, "losses": 0, "pushes": 0, "settled_bets": 0,
             "win_rate": "n/a", "net_units": "0.00", "roi": "n/a",
             "brier": "n/a", "odds_coverage": "n/a"
         }
     market = results[results.market_available]
     bets = results[results.bet_taken]
     wins = int((bets.bet_result == 1).sum()) if len(bets) else 0
+    pushes = int(((bets.home_score == bets.away_score)).sum()) if len(bets) else 0
+    losses = int((bets.bet_result == 0).sum()) if len(bets) else 0
+    settled_bets = wins + losses
     risk = float(bets.risked_units.sum())
     net = float(bets.net_units.sum())
     valid = results[results.home_score != results.away_score]
@@ -289,7 +299,11 @@ def summarize_backtest(results):
         "eligible_games": len(results),
         "games_with_odds": len(market),
         "bets": len(bets),
-        "win_rate": f"{wins / len(bets) * 100:.1f}%" if len(bets) else "n/a",
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "settled_bets": settled_bets,
+        "win_rate": f"{wins / settled_bets * 100:.1f}%" if settled_bets else "n/a",
         "net_units": f"{net:+.2f}",
         "roi": f"{net / risk * 100:+.1f}%" if risk else "n/a",
         "brier": f"{brier:.4f}" if math.isfinite(brier) else "n/a",
