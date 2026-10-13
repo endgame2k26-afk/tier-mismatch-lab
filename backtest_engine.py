@@ -121,7 +121,7 @@ def _dense_ranks(ratings, tolerance=1e-6):
         ranks[team] = current_rank
     return ranks
 
-def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, minimum_edge_pp=4.0):
+def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, minimum_edge_pp=4.0, include_ineligible=False):
     ok, issues, df = validate_games_frame(games)
     if not ok:
         raise ValueError("; ".join(issues))
@@ -200,6 +200,14 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
                 edge = (favorite_prob - no_vig) * 100.0 if market_available else float("nan")
                 eligible = rank_gap >= int(minimum_rank_gap)
                 bet = bool(eligible and market_available and edge >= float(minimum_edge_pp))
+                if not eligible:
+                    decision_reason = "below_rank_gap"
+                elif not market_available:
+                    decision_reason = "missing_moneyline"
+                elif edge < float(minimum_edge_pp):
+                    decision_reason = "edge_below_threshold"
+                else:
+                    decision_reason = "bet_taken"
 
                 home_score, away_score = float(game.home_score), float(game.away_score)
                 tie = home_score == away_score
@@ -237,6 +245,7 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
                     "edge_percentage_points": round(float(edge), 4) if market_available else None,
                     "rank_gap_eligible": bool(eligible),
                     "bet_taken": bool(bet),
+                    "bet_decision_reason": decision_reason,
                     # None marks a push; it is neither a win nor a loss.
                     "bet_result": (int(favorite_won) if not tie else None) if bet else None,
                     "risked_units": 1.0 if bet else 0.0,
@@ -271,7 +280,11 @@ def run_walk_forward_backtest(games, first_test_season, minimum_rank_gap=9, mini
         "max_rank": int(max(out.home_rank_pregame.max(), out.away_rank_pregame.max())) if len(out) else 0,
         "note": "Pregame ratings use only prior-date results; ranks include only franchises scheduled in that season. Equal Elo ratings share a dense rank, preventing alphabetical tie-breaks from creating artificial rank gaps."
     }
-    out = out[out.rank_gap_eligible].reset_index(drop=True)
+    # Strategy-facing callers retain the historical eligible-only behavior.
+    # Audit callers can request every test-period game, including rejected games.
+    if not include_ineligible:
+        out = out[out.rank_gap_eligible].copy()
+    out = out.reset_index(drop=True)
     return out, diagnostics
 
 def summarize_backtest(results):
